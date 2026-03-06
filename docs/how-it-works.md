@@ -44,19 +44,25 @@ We use `SCM_RIGHTS` because it's portable, doesn't require special capabilities,
 
 Two processes connect over a Unix domain socket (UDS). The sender calls `sendmsg()` with a `SCM_RIGHTS` control message containing the FD(s) to transfer. The receiver calls `recvmsg()` and the kernel delivers a fresh FD number in the receiver's FD table, pointing to the same underlying kernel socket object:
 
-```
-  Elixir (BEAM)                           Rust process
-  ┌──────────────┐                        ┌──────────────┐
-  │ FD 19 ───────┼──┐                     │              │
-  │              │  │   UDS + SCM_RIGHTS   │              │
-  │  sendmsg()  ─┼──┼────────────────────►─┤─ recvmsg()  │
-  │              │  │                      │  FD 5 ──┐    │
-  └──────────────┘  │                      └─────────┼────┘
-                    │                                │
-                    ▼                                ▼
-              ┌──────────────────────────────────────────┐
-              │  Kernel socket object (TCP connection)   │
-              └──────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph "Elixir (BEAM)"
+        E_FD["FD 19"]
+        E_SEND["sendmsg()"]
+    end
+    subgraph "Rust process"
+        R_RECV["recvmsg()"]
+        R_FD["FD 5"]
+    end
+    subgraph "Linux Kernel"
+        KS["TCP connection<br/>(kernel socket object)"]
+    end
+
+    E_FD --> E_SEND
+    E_SEND -->|"UDS + SCM_RIGHTS"| R_RECV
+    R_RECV --> R_FD
+    E_FD -.->|references| KS
+    R_FD -.->|references| KS
 ```
 
 After the transfer, both FD 19 (in the BEAM) and FD 5 (in Rust) refer to the same TCP connection. The BEAM stops using its copy; Rust takes over.
@@ -82,6 +88,36 @@ hand_off_to_rust/
 Two of the Rust pieces use the [`nix`](https://crates.io/crates/nix) crate for the low-level socket operations. The NIF also uses [`rustler`](https://crates.io/crates/rustler) to bridge into the BEAM.
 
 ## Step by step
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant L as Listener (Elixir)
+    participant N as FdSender NIF
+    participant R as rust_handler
+
+    C->>L: TCP connect
+    loop 10× every 200ms
+        L->>C: hello from elixir (n)
+    end
+    Note over L: {:ok, fd} = :prim_inet.getfd(socket)
+    L->>R: Port.open (spawn binary with UDS path)
+    Note over R: Bind UDS, listen
+    R-->>L: READY (stdout)
+    L->>N: send_fd(uds_path, fd)
+    N->>R: sendmsg() + SCM_RIGHTS over UDS
+    Note over R: recvmsg() → received FD
+    Note over R: TcpStream::from_raw_fd(fd)
+    Note over R: set_nonblocking(false)
+    R->>C: Hello from Rust
+    loop Echo
+        C->>R: data
+        R->>C: Rust echo: data
+    end
+    C--xR: EOF (client closes)
+    Note over R: Process exits
+    R-->>L: exit_status: 0 (via Port)
+```
 
 ### 1. Elixir accepts and greets
 

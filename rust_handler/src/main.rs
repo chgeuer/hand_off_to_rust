@@ -30,7 +30,8 @@ fn main() {
     println!("pid={my_pid}, FD {fd} → {fd_link}");
     std::io::stdout().flush().unwrap();
 
-    // Reconstruct a TcpStream from the raw file descriptor
+    // SAFETY: `fd` was just received via SCM_RIGHTS, which transfers ownership of
+    // a valid TCP socket FD to this process. No other code in this process uses it.
     let mut stream = unsafe { TcpStream::from_raw_fd(fd) };
 
     // The socket is non-blocking (inherited from the BEAM), switch to blocking
@@ -85,8 +86,7 @@ fn receive_fd(uds_path: &str) -> i32 {
     )
     .expect("socket()");
 
-    let addr = UnixAddr::new(uds_path).expect("UnixAddr");
-    bind(listener.as_raw_fd(), &addr).expect("bind()");
+    let addr = UnixAddr::new(uds_path).expect("UnixAddr");    bind(listener.as_raw_fd(), &addr).expect("bind()");
     listen(&listener, Backlog::new(1).unwrap()).expect("listen()");
 
     // Signal readiness to the parent Elixir process via stdout
@@ -97,6 +97,7 @@ fn receive_fd(uds_path: &str) -> i32 {
     let conn_fd = accept(listener.as_raw_fd()).expect("accept()");
 
     // Receive the FD via SCM_RIGHTS ancillary message
+    // SCM_RIGHTS requires at least 1 byte of "real" data in the message
     let mut buf = [0u8; 1];
     let mut iov = [IoSliceMut::new(&mut buf)];
     let mut cmsg_buf = nix::cmsg_space!(std::os::unix::io::RawFd);

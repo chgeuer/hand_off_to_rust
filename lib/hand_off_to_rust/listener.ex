@@ -11,6 +11,7 @@ defmodule HandOffToRust.Listener do
   @elixir_interval_ms to_timeout(millisecond: 200)
   @elixir_duration_ms to_timeout(second: 2)
 
+  @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
@@ -45,16 +46,17 @@ defmodule HandOffToRust.Listener do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({:new_client, client_socket}, state) do
     Logger.info("[Listener] New client connected")
 
     # Send "hello from elixir" every 200ms for 2 seconds
     count = div(@elixir_duration_ms, @elixir_interval_ms)
 
-    for i <- 1..count do
+    Enum.each(1..count, fn i ->
       :gen_tcp.send(client_socket, "hello from elixir (#{i})\n")
       Process.sleep(@elixir_interval_ms)
-    end
+    end)
 
     Logger.info("[Listener] Elixir greeting phase done, handing off to Rust")
 
@@ -111,11 +113,13 @@ defmodule HandOffToRust.Listener do
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({port, {:exit_status, status}}, state) when is_port(port) do
     Logger.info("[Listener] Rust handler exited with status #{status}")
     {:noreply, state}
   end
 
+  @impl true
   def handle_info({port, {:data, {:eol, line}}}, state) when is_port(port) do
     Logger.info("[Rust] #{line}")
     {:noreply, state}

@@ -32,7 +32,7 @@ fn send_fd(path: String, fd: i32) -> NifResult<Atom> {
     connect(sock.as_raw_fd(), &addr)
         .map_err(|e| Error::Term(Box::new(format!("connect(): {e}"))))?;
 
-    // 1-byte data payload (required by sendmsg)
+    // SCM_RIGHTS requires at least 1 byte of "real" data in the message
     let data = [0u8; 1];
     let iov = [IoSlice::new(&data)];
 

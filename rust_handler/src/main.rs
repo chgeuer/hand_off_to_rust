@@ -21,6 +21,15 @@ fn main() {
     let fd = receive_fd(uds_path);
     eprintln!("[Rust] Received TCP socket FD {fd}");
 
+    // Show which socket inode this FD points to (proves same kernel object as BEAM's FD)
+    let my_pid = std::process::id();
+    let fd_link = std::fs::read_link(format!("/proc/self/fd/{fd}"))
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "?".to_string());
+    // Print on stdout so Elixir's Port captures it in the log
+    println!("pid={my_pid}, FD {fd} → {fd_link}");
+    std::io::stdout().flush().unwrap();
+
     // Reconstruct a TcpStream from the raw file descriptor
     let mut stream = unsafe { TcpStream::from_raw_fd(fd) };
 

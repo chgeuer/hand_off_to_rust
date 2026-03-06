@@ -75,6 +75,20 @@ auto: build
     just stop
 
 # ──────────────────────────────────────────────
+#  Observability
+# ──────────────────────────────────────────────
+
+# Show which OS processes own TCP sockets on this port (one-shot)
+lsof:
+    @echo "Socket owners on port {{PORT}}:"
+    @echo "─────────────────────────────────────────────────────────────"
+    @lsof -i TCP:{{PORT}} -n -P +c0 2>/dev/null || echo "(no sockets open)"
+
+# Continuously watch socket ownership (refresh every 0.5s)
+watch-sockets:
+    watch -n 0.5 "lsof -i TCP:{{PORT}} -n -P +c0 2>/dev/null || echo '(no sockets open)'"
+
+# ──────────────────────────────────────────────
 #  Maintenance
 # ──────────────────────────────────────────────
 
@@ -91,12 +105,14 @@ demo:
     @echo "║      Elixir → Rust TCP Socket Handoff Demo              ║"
     @echo "╚══════════════════════════════════════════════════════════╝"
     @echo ""
-    @echo "  just start       Start server node (TCP on :${PORT})"
-    @echo "  just client      Elixir test client   (new terminal)"
-    @echo "  just ncat        Raw ncat client       (new terminal)"
-    @echo "  just auto        Run full demo in one terminal"
+    @echo "  just start           Start server node (TCP on :${PORT})"
+    @echo "  just client          Elixir test client   (new terminal)"
+    @echo "  just ncat            Raw ncat client       (new terminal)"
+    @echo "  just auto            Run full demo in one terminal"
     @echo ""
-    @echo "  just log         Tail the server log"
-    @echo "  just rpc '<e>'   Evaluate Elixir on the live node"
-    @echo "  just stop        Stop the server"
+    @echo "  just lsof            Show socket owners on port :${PORT}"
+    @echo "  just watch-sockets   Continuously watch socket ownership"
+    @echo "  just log             Tail the server log"
+    @echo "  just rpc '<e>'       Evaluate Elixir on the live node"
+    @echo "  just stop            Stop the server"
     @echo ""

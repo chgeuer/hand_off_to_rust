@@ -21,7 +21,7 @@ defmodule HandOffToRust.Listener do
     {:ok, lsock} = :gen_tcp.listen(port, [:binary, active: false, reuseaddr: true])
     Logger.info("[Listener] Listening on TCP port #{port}")
     send(self(), :accept)
-    {:ok, %{listen_socket: lsock}}
+    {:ok, %{listen_socket: lsock, tcp_port: port}}
   end
 
   @impl true
@@ -62,6 +62,9 @@ defmodule HandOffToRust.Listener do
     {:ok, fd} = :prim_inet.getfd(client_socket)
     Logger.info("[Listener] Extracted FD #{fd}")
 
+    # Show who owns the socket BEFORE handoff
+    log_socket_owners("BEFORE handoff", state.tcp_port, fd)
+
     # Start the Rust handler binary with a unique UDS path
     uds_path = "/tmp/hand_off_#{System.pid()}_#{:erlang.unique_integer([:positive])}.sock"
     rust_binary = rust_handler_path()
@@ -82,6 +85,12 @@ defmodule HandOffToRust.Listener do
         # Send the TCP socket FD over UDS using SCM_RIGHTS
         :ok = HandOffToRust.FdSender.send_fd(uds_path, fd)
         Logger.info("[Listener] FD #{fd} handed off to Rust handler")
+
+        # Brief pause so Rust has time to receive the FD before we probe
+        Process.sleep(100)
+
+        # Show who owns the socket AFTER handoff
+        log_socket_owners("AFTER handoff", state.tcp_port, fd)
     after
       5_000 ->
         Logger.error("[Listener] Rust handler didn't signal READY in time")
@@ -105,6 +114,44 @@ defmodule HandOffToRust.Listener do
   def handle_info({port, {:data, {:eol, line}}}, state) when is_port(port) do
     Logger.info("[Rust] #{line}")
     {:noreply, state}
+  end
+
+  # Show which OS processes hold a file descriptor to the TCP connection.
+  # Reads /proc/self/fd to show the socket inode on the BEAM side, and
+  # runs lsof to list all processes with ESTABLISHED connections on the port.
+  defp log_socket_owners(label, tcp_port, fd) do
+    beam_pid = System.pid()
+
+    # Show what the BEAM's FD points to (e.g. socket:[1234567])
+    fd_link =
+      case File.read_link("/proc/#{beam_pid}/fd/#{fd}") do
+        {:ok, target} -> target
+        {:error, _} -> "?"
+      end
+
+    Logger.info("[#{label}] BEAM pid=#{beam_pid}, FD #{fd} → #{fd_link}")
+
+    # Run lsof to show all processes with ESTABLISHED connections on this port
+    case System.cmd("lsof", ["-i", "TCP:#{tcp_port}", "-n", "-P", "+c0"],
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        lines =
+          output
+          |> String.split("\n")
+          |> Enum.filter(&String.contains?(&1, "ESTABLISHED"))
+
+        if lines != [] do
+          Logger.info("[#{label}] Socket owners (lsof):")
+
+          for line <- lines do
+            Logger.info("  #{line}")
+          end
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   defp rust_handler_path do

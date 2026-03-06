@@ -47,4 +47,31 @@ fn send_fd(path: String, fd: i32) -> NifResult<Atom> {
     Ok(atoms::ok())
 }
 
+/// Release the BEAM's reference to a socket FD after handoff.
+///
+/// Uses dup2() to atomically replace the FD with /dev/null. This:
+/// 1. Decrements the kernel socket's refcount (so it can fully close when
+///    the Rust process is done)
+/// 2. Leaves the Erlang port driver with a valid FD (pointing to /dev/null)
+///    so it won't accidentally close a reused FD number during GC
+///
+/// We can't use gen_tcp.close/1 because it calls shutdown() which sends a
+/// TCP FIN and kills the connection for all FD holders.
+#[rustler::nif]
+fn release_fd(fd: i32) -> NifResult<Atom> {
+    use std::os::fd::IntoRawFd;
+
+    let devnull = std::fs::File::open("/dev/null")
+        .map_err(|e| Error::Term(Box::new(format!("open /dev/null: {e}"))))?;
+    let devnull_fd = devnull.into_raw_fd();
+
+    nix::unistd::dup2(devnull_fd, fd)
+        .map_err(|e| Error::Term(Box::new(format!("dup2(): {e}"))))?;
+
+    nix::unistd::close(devnull_fd)
+        .map_err(|e| Error::Term(Box::new(format!("close(): {e}"))))?;
+
+    Ok(atoms::ok())
+}
+
 rustler::init!("Elixir.HandOffToRust.FdSender");

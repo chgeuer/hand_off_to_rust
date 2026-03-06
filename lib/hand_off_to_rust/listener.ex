@@ -8,8 +8,8 @@ defmodule HandOffToRust.Listener do
   require Logger
 
   @default_port 4000
-  @elixir_interval_ms 200
-  @elixir_duration_ms 2_000
+  @elixir_interval_ms to_timeout(millisecond: 200)
+  @elixir_duration_ms to_timeout(second: 2)
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
@@ -86,6 +86,12 @@ defmodule HandOffToRust.Listener do
         :ok = HandOffToRust.FdSender.send_fd(uds_path, fd)
         Logger.info("[Listener] FD #{fd} handed off to Rust handler")
 
+        # Release the BEAM's reference to the socket FD.
+        # dup2() replaces FD with /dev/null — decrements the kernel socket's
+        # refcount without calling shutdown() (which would send TCP FIN).
+        :ok = HandOffToRust.FdSender.release_fd(fd)
+        Logger.info("[Listener] Released BEAM's FD #{fd} (dup2'd to /dev/null)")
+
         # Brief pause so Rust has time to receive the FD before we probe
         Process.sleep(100)
 
@@ -97,9 +103,8 @@ defmodule HandOffToRust.Listener do
         Port.close(port)
     end
 
-    # Don't close client_socket — gen_tcp.close sends TCP FIN which kills the
-    # connection. We intentionally leak the Erlang port; the Rust process now
-    # owns the connection via its SCM_RIGHTS-duplicated FD.
+    # The gen_tcp port still exists but its FD now points to /dev/null.
+    # When Erlang GCs the port, closing /dev/null is harmless.
 
     # Accept next client
     send(self(), :accept)

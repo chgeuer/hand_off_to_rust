@@ -29,7 +29,7 @@ sequenceDiagram
 
 > **📖 [Read the full deep-dive: How it works →](docs/how-it-works.md)**
 >
-> Covers `SCM_RIGHTS`, non-blocking socket gotchas, `CLOEXEC`, why you must *not* call `gen_tcp.close/1` after handoff, and more.
+> Covers `SCM_RIGHTS`, the `dup2(/dev/null)` trick for clean FD release, non-blocking socket gotchas, `CLOEXEC`, and more.
 
 ## What happens
 
@@ -84,17 +84,19 @@ Rust echo: hey there    ← Rust responds
 ## All commands
 
 ```
-just build          Build everything
-just start          Start the BEAM node
-just stop           Stop the BEAM node
-just status         Check if the node is running
-just log            Tail the server log
-just client         Elixir test client
-just ncat           Raw ncat client (proves it's one TCP stream)
-just auto           Full automated demo (single terminal)
-just rpc '<expr>'   Evaluate Elixir on the live node
-just clean          Remove all build artifacts
-just demo           Show step-by-step instructions
+just build           Build everything
+just start           Start the BEAM node
+just stop            Stop the BEAM node
+just status          Check if the node is running
+just log             Tail the server log
+just client          Elixir test client
+just ncat            Raw ncat client (proves it's one TCP stream)
+just auto            Full automated demo (single terminal)
+just lsof            Show which OS processes own sockets on the port
+just watch-sockets   Continuously watch socket ownership (0.5s refresh)
+just rpc '<expr>'    Evaluate Elixir on the live node
+just clean           Remove all build artifacts
+just demo            Show step-by-step instructions
 ```
 
 ## Project structure

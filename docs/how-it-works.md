@@ -228,17 +228,41 @@ stream.set_nonblocking(false).expect("failed to set blocking mode");
 
 The `set_nonblocking(false)` call is important — the BEAM keeps its sockets in non-blocking mode for its own I/O scheduler, and that mode is inherited through `SCM_RIGHTS`. Without switching to blocking mode, the first `read()` call in Rust would return `EAGAIN` immediately.
 
-### 7. Elixir leaks the socket intentionally
+### 7. Elixir releases its copy of the FD
 
-After sending the FD, Elixir does *not* call `:gen_tcp.close/1`:
+After sending the FD, Elixir must close its own reference to the socket — but it can't use `:gen_tcp.close/1` because that calls `shutdown()` which sends a TCP FIN and kills the connection for everyone. Instead, a NIF uses `dup2()` to atomically replace the socket FD with `/dev/null`:
 
-```elixir
-# Don't close client_socket — gen_tcp.close sends TCP FIN which kills the
-# connection. We intentionally leak the Erlang port; the Rust process now
-# owns the connection via its SCM_RIGHTS-duplicated FD.
+```rust
+#[rustler::nif]
+fn release_fd(fd: i32) -> NifResult<Atom> {
+    let devnull = std::fs::File::open("/dev/null")?;
+    let devnull_fd = devnull.into_raw_fd();
+    nix::unistd::dup2(devnull_fd, fd)?;
+    nix::unistd::close(devnull_fd)?;
+    Ok(atoms::ok())
+}
 ```
 
-`:gen_tcp.close/1` calls `shutdown()` followed by `close()` on the underlying FD. The `shutdown()` sends a TCP FIN to the client, which would terminate the connection even though Rust still has its own copy of the FD. We avoid this by simply dropping the Elixir reference — the gen_tcp port is garbage collected eventually, and when `close()` happens without `shutdown()`, the kernel sees another FD (Rust's) still references the socket and keeps the connection alive.
+```elixir
+:ok = HandOffToRust.FdSender.release_fd(fd)
+```
+
+This does three things at once:
+- **Decrements** the kernel socket's refcount (so it fully closes when Rust is done — no lingering `CLOSE_WAIT`)
+- **Leaves** the Erlang port driver with a valid FD (pointing to `/dev/null`) so GC doesn't accidentally close a reused FD number
+- **Avoids** `shutdown()` entirely — no TCP FIN sent
+
+You can verify the transfer with `lsof`:
+
+```
+BEFORE handoff:
+  beam.smp     PID1 ... 19u  IPv4 14129349 ... (ESTABLISHED)
+
+AFTER handoff:
+  rust_handler PID2 ...  5u  IPv4 14129349 ... (ESTABLISHED)
+```
+
+The BEAM's FD 19 now points to `/dev/null` and no longer appears as a socket owner. Only `rust_handler` holds the TCP connection.
 
 ## Gotchas
 
@@ -252,9 +276,9 @@ You might think: "why not just pass the FD number as a command-line argument and
 
 `SCM_RIGHTS` sidesteps this entirely. The kernel creates a *new* FD in the receiving process, independent of `CLOEXEC` flags on the sender's copy.
 
-### Don't call `gen_tcp.close/1` after handoff
+### Why `dup2(/dev/null)` instead of `gen_tcp.close/1`
 
-As discussed above, `gen_tcp.close/1` sends a TCP FIN. If you need to clean up on the Elixir side, you can call `:erlang.port_close/1` on the underlying port, but even that calls `close()` on the FD. The safest approach is to simply stop referencing the socket and let the BEAM garbage collect it after the Rust process has finished.
+`:gen_tcp.close/1` calls `shutdown()` before `close()`. `shutdown()` operates on the *kernel socket object*, not just the FD — it sends a TCP FIN and terminates the connection for all holders, including the Rust process. A plain `close()` would be safe (the kernel keeps the socket alive while Rust's FD exists), but it risks the FD number being reused before the Erlang port driver GCs its stale reference. `dup2()` to `/dev/null` gives us the best of both: the socket refcount drops immediately, and the Erlang port holds a harmless FD that's safe to close later.
 
 ### The 1-byte payload in `sendmsg`
 

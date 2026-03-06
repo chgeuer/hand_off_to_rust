@@ -57,9 +57,35 @@ fn send_fd(path: String, fd: i32) -> NifResult<Atom> {
 ///
 /// We can't use gen_tcp.close/1 because it calls shutdown() which sends a
 /// TCP FIN and kills the connection for all FD holders.
+///
+/// # Safety concern
+///
+/// Calling this with a wrong FD (e.g., the BEAM's epoll FD or a scheduler
+/// pipe) would silently replace it with /dev/null, corrupting the VM.
+/// We validate that the FD points to a socket before proceeding.
 #[rustler::nif]
 fn release_fd(fd: i32) -> NifResult<Atom> {
     use std::os::fd::IntoRawFd;
+
+    if fd < 0 {
+        return Err(Error::Term(Box::new(format!("invalid FD: {fd}"))));
+    }
+
+    // Verify this FD is actually a socket before we dup2 over it.
+    // This prevents accidentally destroying BEAM-internal FDs (epoll,
+    // scheduler pipes, file handles) if the caller passes a wrong number.
+    //
+    // SAFETY: We're probing the FD type, not taking ownership. The FD remains
+    // valid and owned by the BEAM's port/socket driver throughout.
+    let borrowed = unsafe { std::os::fd::BorrowedFd::borrow_raw(fd) };
+    match nix::sys::socket::getsockopt(&borrowed, nix::sys::socket::sockopt::SockType) {
+        Ok(_) => {} // It's a socket — safe to proceed
+        Err(_) => {
+            return Err(Error::Term(Box::new(format!(
+                "FD {fd} is not a socket — refusing to release (would corrupt the VM)"
+            ))));
+        }
+    }
 
     let devnull = std::fs::File::open("/dev/null")
         .map_err(|e| Error::Term(Box::new(format!("open /dev/null: {e}"))))?;

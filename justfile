@@ -17,6 +17,9 @@ build-rust:
 build-elixir:
     mix deps.get
     mix compile
+    @# Ensure NIF .so exists (Rustler incremental build can skip it)
+    @test -f _build/dev/lib/hand_off_to_rust/priv/native/fd_sender.so \
+      || { echo "⚠ NIF missing, forcing rebuild…"; mix clean && mix compile; }
 
 # Build everything
 build: build-rust build-elixir

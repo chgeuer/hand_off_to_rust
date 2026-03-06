@@ -1,0 +1,37 @@
+# The directory Mix will write compiled artifacts to.
+/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+/cover/
+
+# The directory Mix downloads your dependencies sources to.
+/deps/
+
+# Where third-party dependencies like ExDoc output generated docs.
+/doc/
+
+# Temporary files, for example, from tests.
+/tmp/
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+*.ez
+
+# Ignore package tarball (built via "mix hex.build").
+hand_off_to_rust-*.tar
+
+# Rust build artifacts
+/rust_handler/target/
+/native/fd_sender/target/
+
+# Compiled Rust handler binary in priv (built from rust_handler/)
+/priv/rust_handler
+
+# Compiled NIF shared object (built by Rustler)
+/priv/native/
+
+# Dev node artifacts
+.dev_node.pid
+.dev_node.log

@@ -1,0 +1,11 @@
+[package]
+name = "rust_handler"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rust_handler"
+path = "src/main.rs"
+
+[dependencies]
+nix = { version = "0.29", features = ["socket", "uio", "net"] }
